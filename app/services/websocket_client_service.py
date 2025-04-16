@@ -148,6 +148,50 @@ class WebSocketClientService:
         return WebSocketClientService.send_request(request, "assets_wallet", handler)
 
     @staticmethod
+    def get_quote(amount, destination_address, send_asset="DePix", recv_asset="USDt"):
+        if not WebSocketClientService.ensure_websocket_ready():
+            return {
+                "success": False,
+                "recv_amount": None,
+                "message": "WebSocket service failed to start"
+            }
+
+        def handler(data):
+            if "Resp" in data and "GetQuote" in data["Resp"]["resp"]:
+                recv_amount = data["Resp"]["resp"]["GetQuote"].get("recv_amount")
+                return {
+                    "success": True,
+                    "recv_amount": recv_amount,
+                    "message": ""
+                }
+            elif "Error" in data:
+                return {
+                    "success": False,
+                    "recv_amount": None,
+                    "message": f"Error: {data['Error']['err']['text']}"
+                }
+            return None  # Ignora mensagens irrelevantes
+
+        request = {
+            "Req": {
+                "id": 1,
+                "req": {
+                    "GetQuote": {
+                        "send_asset": send_asset,
+                        "send_amount": float(amount),
+                        "recv_asset": recv_asset,
+                        "receive_address": destination_address
+                    }
+                }
+            }
+        }
+
+        return WebSocketClientService.send_request(
+            request, "recv_amount", handler
+        )
+
+
+    @staticmethod
     def get_new_liquid_address():
         if not WebSocketClientService.ensure_websocket_ready():
             return {

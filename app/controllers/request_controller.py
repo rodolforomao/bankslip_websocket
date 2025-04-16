@@ -24,6 +24,20 @@ def execute():
         elif funcao == 'get_new_liquid_address':
             result = WebSocketClientService.get_new_liquid_address()
             return jsonify(result)
+        elif funcao == 'get_quote':
+            data = payload.get('data')
+            if data:
+                amount = data.get('amount')
+                address = data.get('address')
+                send_asset = data.get('send_asset')
+                recv_asset = data.get('recv_asset')
+                result = WebSocketClientService.get_quote(amount, address, send_asset, recv_asset)
+                return jsonify(result)
+            return {
+                "success": False,
+                "recv_amount": None,
+                "message": "Data is missing - amount, address, send asset and receive asset"
+            }
 
         return jsonify({'error': 'Função desconhecida'}), 400
 
