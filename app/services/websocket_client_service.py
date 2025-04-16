@@ -1,38 +1,99 @@
 import json
-import websocket
+import time
+import socket
 import threading
+import subprocess
+import websocket
+
 
 class WebSocketClientService:
     ws_url = "ws://127.0.0.1:3102"
+    ws_dir = "D:/enviroment/desenvolvimento/Estudos/liquid/sideswap_rust/sideswap_manager"
+    MAX_ATTEMPTS = 3
 
     @staticmethod
-    def get_assets_wallet():
-        result_container = {}
+    def is_websocket_online(host="127.0.0.1", port=3102, timeout=1):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def start_websocket_service():
+        try:
+            process = subprocess.Popen(
+                ["cargo", "run", "--", "config/example.toml"],
+                cwd=WebSocketClientService.ws_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                shell=False
+            )
+
+            timeout_seconds = 5
+            interval = 0.5
+            waited = 0
+            while waited < timeout_seconds:
+                if WebSocketClientService.is_websocket_online():
+                    return True
+                time.sleep(interval)
+                waited += interval
+
+            print("WebSocket server not responding after starting.")
+            return False
+
+        except Exception as e:
+            print("Failed to start WebSocket service:", str(e))
+            return False
+
+    @staticmethod
+    def ensure_websocket_ready():
+        attempt = 0
+        while attempt < WebSocketClientService.MAX_ATTEMPTS:
+            if WebSocketClientService.is_websocket_online():
+                return True
+            if WebSocketClientService.start_websocket_service():
+                if WebSocketClientService.is_websocket_online():
+                    return True
+            attempt += 1
+        return False
+
+    @staticmethod
+    def send_request(request_data, result_key, success_handler, timeout=10):
+        result_container = {"result": None}
+        request_sent = bool(request_data)
 
         def on_message(ws, message):
-            data = json.loads(message)
-            index = 'assets_wallet'
-            if "Notif" in data:
-                assets_balances = data['Notif']['notif']['Balances']['balances']
-                result_container['result'] = {
-                    "success": True,
-                    index: assets_balances,
-                    "message": ""
-                }
-                ws.close()
-            elif "Error" in data:
+            try:
+                data = json.loads(message)
+
+                if "Error" in data:
+                    result_container['result'] = {
+                        "success": False,
+                        result_key: None,
+                        "message": f"Error: {data['Error']['err']['text']}"
+                    }
+                    ws.close()
+
+                else:
+                    result = success_handler(data)
+                    if result is not None:
+                        result_container['result'] = result
+                        ws.close()
+                    # senão ignora (ex: notificação sem relação com o pedido)
+
+            except Exception as e:
                 result_container['result'] = {
                     "success": False,
-                    index: None,
-                    "message": f"Error: {data}"
+                    result_key: None,
+                    "message": f"Exception parsing message: {str(e)}"
                 }
                 ws.close()
 
         def on_error(ws, error):
-            index = 'assets_wallet'
             result_container['result'] = {
                 "success": False,
-                index: None,
+                result_key: None,
                 "message": f"Error: {error}"
             }
             ws.close()
@@ -41,7 +102,8 @@ class WebSocketClientService:
             pass
 
         def on_open(ws):
-            pass
+            if request_sent:
+                ws.send(json.dumps(request_data))
 
         ws = websocket.WebSocketApp(
             WebSocketClientService.ws_url,
@@ -53,10 +115,56 @@ class WebSocketClientService:
 
         thread = threading.Thread(target=ws.run_forever)
         thread.start()
-        thread.join(timeout=10)
+        thread.join(timeout=timeout)
 
-        return result_container.get('result', {
+        return result_container.get('result') or {
             "success": False,
-            "assets_wallet": None,
+            result_key: None,
             "message": "Timeout or no response"
-        })
+        }
+
+    @staticmethod
+    def get_assets_wallet():
+        if not WebSocketClientService.ensure_websocket_ready():
+            return {
+                "success": False,
+                "assets_wallet": None,
+                "message": "WebSocket service failed to start"
+            }
+
+        def handler(data):
+            if "Notif" in data and "Balances" in data["Notif"]["notif"]:
+                balances = data['Notif']['notif']['Balances']['balances']
+                return {
+                    "success": True,
+                    "assets_wallet": balances,
+                    "message": ""
+                }
+            return None  # Ignora outras mensagens
+
+        # Como a requisição de assets é enviada automaticamente pelo servidor,
+        # não enviamos nada, só ouvimos.
+        request = {}
+        return WebSocketClientService.send_request(request, "assets_wallet", handler)
+
+    @staticmethod
+    def get_new_liquid_address():
+        if not WebSocketClientService.ensure_websocket_ready():
+            return {
+                "success": False,
+                "new_liquid_address": None,
+                "message": "WebSocket service failed to start"
+            }
+
+        def handler(data):
+            if "Resp" in data and "NewAddress" in data["Resp"]["resp"]:
+                address = data['Resp']['resp']['NewAddress']['address']
+                return {
+                    "success": True,
+                    "new_liquid_address": address,
+                    "message": ""
+                }
+            return None
+
+        request = {"Req": {"id": 1, "req": {"NewAddress": {}}}}
+        return WebSocketClientService.send_request(request, "new_liquid_address", handler)

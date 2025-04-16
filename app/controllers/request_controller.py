@@ -21,6 +21,9 @@ def execute():
         elif funcao == 'get_assets_wallet':
             result = WebSocketClientService.get_assets_wallet()
             return jsonify(result)
+        elif funcao == 'get_new_liquid_address':
+            result = WebSocketClientService.get_new_liquid_address()
+            return jsonify(result)
 
         return jsonify({'error': 'Função desconhecida'}), 400
 
